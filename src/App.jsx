@@ -23,7 +23,6 @@ import {
 import { 
   getAuth, 
   signInAnonymously, 
-  signInWithCustomToken,
   onAuthStateChanged
 } from 'firebase/auth';
 
@@ -37,20 +36,12 @@ const myFirebaseConfig = {
   appId: "1:535190243184:web:a9cfff5c3453ee697f31b5"
 };
 
-// 💡 智慧環境偵測：判斷目前是在預覽環境還是正式網頁
-const isCanvasEnv = typeof __firebase_config !== 'undefined';
-const firebaseConfig = isCanvasEnv ? JSON.parse(__firebase_config) : myFirebaseConfig;
-
-const app = initializeApp(firebaseConfig);
+// 直接強制使用您的資料庫，避開任何預覽環境的權限干擾
+const app = initializeApp(myFirebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// 💡 自動切換資料庫路徑，完美相容預覽與正式環境
 const getViolationsRef = () => {
-  if (isCanvasEnv) {
-    const canvasAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-    return collection(db, 'artifacts', canvasAppId, 'public', 'data', 'violations');
-  }
   return collection(db, 'violations');
 };
 
@@ -267,9 +258,8 @@ const RegisterView = ({ formData, setFormData, handleSubmit }) => {
 
 const SearchView = ({ records, exportToCSV }) => {
   const [search, setSearch] = useState('');
-  const now = new Date();
-  const curMonth = now.toISOString().slice(0, 7);
-  const monthly = records.filter(r => (r.date || '').startsWith(curMonth));
+  
+  // 💡 修正：不再寫死當前月份，改為直接過濾搜尋結果
   const filtered = records.filter(r => (r.className||'').includes(search) || (r.studentName||'').includes(search) || (r.date||'').includes(search));
 
   return (
@@ -282,7 +272,7 @@ const SearchView = ({ records, exportToCSV }) => {
         <div className="flex-1 w-full max-w-xl relative group">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-500 transition-colors" size={20} />
           <input 
-            placeholder="搜尋班級、姓名或日期 (例如: 101 或 王小明)..." 
+            placeholder="搜尋班級、姓名或日期 (例如: 2026-01 或 101)..." 
             value={search} 
             onChange={e=>setSearch(e.target.value)} 
             className="w-full bg-slate-50 hover:bg-slate-100 focus:bg-white border border-slate-200 focus:border-blue-400 pl-12 pr-4 py-4 rounded-2xl outline-none font-bold transition-all shadow-sm focus:shadow-md" 
@@ -290,8 +280,9 @@ const SearchView = ({ records, exportToCSV }) => {
         </div>
 
         <div className="flex items-center gap-3 w-full md:w-auto shrink-0">
-           <button onClick={() => exportToCSV(monthly)} className="flex-1 md:flex-none bg-blue-100 text-blue-700 hover:bg-blue-200 px-6 py-4 rounded-2xl text-sm font-black transition-colors flex items-center justify-center gap-2">
-             <Download size={18}/> 依月下載
+           {/* 💡 修正：按鈕改成匯出搜尋結果 */}
+           <button onClick={() => exportToCSV(filtered)} className="flex-1 md:flex-none bg-blue-100 text-blue-700 hover:bg-blue-200 px-6 py-4 rounded-2xl text-sm font-black transition-colors flex items-center justify-center gap-2">
+             <Download size={18}/> 匯出搜尋結果
            </button>
            <button onClick={() => exportToCSV(records)} className="flex-1 md:flex-none bg-slate-800 text-white hover:bg-slate-700 px-6 py-4 rounded-2xl text-sm font-black shadow-lg transition-all flex items-center justify-center gap-2">
              <Download size={18}/> 全部下載
@@ -371,15 +362,10 @@ export default function App() {
     }
   }, []);
 
-  // 💡 關鍵修復：在預覽環境使用特製金鑰，在正式環境使用匿名登入
   useEffect(() => {
     const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
+        await signInAnonymously(auth);
       } catch (err) {
         console.error("Firebase Auth failed:", err);
       }
@@ -450,6 +436,7 @@ export default function App() {
   const exportCSV = (data) => {
     if (data.length === 0) return setMsg({ text: '此條件下無資料', type: 'error' });
     
+    // 下載方法維持新版的 Blob，確保中文不亂碼
     const headers = ['日期', '節次', '狀態', '班級', '座號', '姓名', '登記人'];
     const body = data.map(r => [
       r.date || '', 
@@ -488,6 +475,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-900 selection:bg-blue-100">
+      {/* 💡 確保寬度是 max-w-6xl (電腦版寬螢幕)，不再是 max-w-md */}
       <header className="bg-[#1a202c] text-white pt-6 pb-6 sticky top-0 z-50 shadow-xl">
         <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-4 w-full md:w-auto justify-center md:justify-start">
@@ -528,6 +516,7 @@ export default function App() {
         </div>
       )}
 
+      {/* 💡 確保這裡也是 max-w-6xl */}
       <main className="max-w-6xl mx-auto p-4 md:p-6 mt-4 md:mt-6">
         {loading ? (
           <div className="text-center py-32 flex flex-col items-center gap-6 text-slate-300 font-black uppercase tracking-widest text-lg">
