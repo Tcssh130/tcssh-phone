@@ -10,15 +10,18 @@ import {
   ArrowRight, 
   FileSpreadsheet,
   XCircle,
-  Database
+  Database,
+  Trash2
 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, 
-  collection, 
-  addDoc, 
-  onSnapshot, 
-  Timestamp 
+  collection,
+  addDoc,
+  onSnapshot,
+  Timestamp,
+  doc,
+  deleteDoc
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -289,7 +292,7 @@ const RegisterView = ({ formData, setFormData, handleSubmit }) => {
   );
 };
 
-const SearchView = ({ records, exportToCSV }) => {
+const SearchView = ({ records, exportToCSV, handleDelete }) => {
   const [search, setSearch] = useState('');
   
   // 💡 修正：不再寫死當前月份，改為直接過濾搜尋結果
@@ -333,6 +336,7 @@ const SearchView = ({ records, exportToCSV }) => {
                 <th className="px-6 py-5">班級 / 座號</th>
                 <th className="px-6 py-5">姓名</th>
                 <th className="px-6 py-5">登記人</th>
+                <th className="px-6 py-5 text-center">操作</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -350,11 +354,20 @@ const SearchView = ({ records, exportToCSV }) => {
                   <td className="px-6 py-4 whitespace-nowrap text-base">{r.className} <span className="text-slate-400 text-sm">({r.seatNumber}號)</span></td>
                   <td className="px-6 py-4 whitespace-nowrap">{r.studentName || <span className="text-slate-300">-</span>}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-slate-400 italic">{r.registrar || <span className="text-slate-300">-</span>}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-center">
+                    <button
+                      onClick={() => handleDelete(r)}
+                      title="刪除此筆紀錄"
+                      className="inline-flex items-center justify-center w-9 h-9 rounded-xl text-red-500 bg-red-50 hover:bg-red-500 hover:text-white transition-all active:scale-90"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan="5" className="px-6 py-20 text-center text-slate-400 font-bold italic">
+                  <td colSpan="6" className="px-6 py-20 text-center text-slate-400 font-bold italic">
                     沒有找到符合的紀錄
                   </td>
                 </tr>
@@ -487,6 +500,20 @@ export default function App() {
       }
     } catch (err) {
       setMsg({ text: '儲存失敗，請檢查網路連線', type: 'error' }); 
+    }
+  };
+
+  const handleDelete = async (record) => {
+    if (!user) return setMsg({ text: '系統尚未連線,請稍後再試', type: 'error' });
+    const who = `${record.date}　${record.className} 班 ${record.seatNumber} 號${record.studentName ? '　' + record.studentName : ''}`;
+    const ok = window.confirm(`確定要刪除這筆違規紀錄嗎?\n\n${who}\n\n刪除後整筆資料會從資料庫永久移除,無法復原。`);
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, 'violations', record.id));
+      setMsg({ text: '已刪除該筆違規紀錄', type: 'success' });
+      setTimeout(() => setMsg(null), 3000);
+    } catch (err) {
+      setMsg({ text: '刪除失敗,請檢查網路連線', type: 'error' });
     }
   };
 
@@ -650,7 +677,7 @@ export default function App() {
           <>
             {tab === 'stats' && !isShareMode && <StatsView stats={statsData} dateRange={dateRange} setDateRange={setDateRange} />}
             {tab === 'register' && <RegisterView formData={formData} setFormData={setFormData} handleSubmit={handleSubmit} />}
-            {tab === 'search' && !isShareMode && <SearchView records={records} exportToCSV={exportCSV} />}
+            {tab === 'search' && !isShareMode && <SearchView records={records} exportToCSV={exportCSV} handleDelete={handleDelete} />}
           </>
         )}
       </main>
