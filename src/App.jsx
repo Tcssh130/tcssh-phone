@@ -45,6 +45,39 @@ const getViolationsRef = () => {
   return collection(db, 'violations');
 };
 
+// --- 懲處累計換算 ---
+// 每一次違規 = 記警告 1 次；3 警告 = 小過 1 次；3 小過 = 大過 1 次
+// 換算後：total（累計違規次數）→ 大過 / 小過 / 警告 的組合
+const chNum = (n) => (n === 1 ? '乙' : n === 2 ? '兩' : (['', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][n] || String(n)));
+
+const formatPunishment = (total) => {
+  if (!total || total < 1) return '無';
+  const da = Math.floor(total / 9);
+  const rem = total % 9;
+  const xiao = Math.floor(rem / 3);
+  const jing = rem % 3;
+  let s = '';
+  if (da) s += `大過${chNum(da)}次`;
+  if (xiao) s += `小過${chNum(xiao)}次`;
+  if (jing) s += `警告${chNum(jing)}次`;
+  return s || '無';
+};
+
+// 取得某位學生在「學期查詢區間」內、本次之前已被登記的日期清單（由舊到新排序）
+const getPriorViolationDates = (records, student, range) => {
+  const cls = (student.className || '').trim();
+  const seat = String(student.seatNumber || '').trim();
+  return records
+    .filter(r =>
+      (r.className || '').trim() === cls &&
+      String(r.seatNumber || '').trim() === seat &&
+      (r.date || '') >= range.start && (r.date || '') <= range.end
+    )
+    .map(r => r.date || '')
+    .filter(Boolean)
+    .sort();
+};
+
 // --- 子元件 ---
 
 const StatsView = ({ stats, dateRange, setDateRange }) => (
@@ -340,6 +373,7 @@ export default function App() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState(null);
+  const [reminder, setReminder] = useState(null); // 登錄後的累計懲處提醒
   const [isShareMode, setIsShareMode] = useState(false);
   
   const today = new Date().toISOString().split('T')[0];
@@ -424,11 +458,34 @@ export default function App() {
       });
 
       await Promise.all(promises);
-      
-      setMsg({ text: `成功登錄 ${validStudents.length} 筆違規紀錄`, type: 'success' });
+
+      // 依「學期查詢區間」統計每位學生本次之前的登記次數，計算累計懲處
+      const reminders = validStudents.map(s => {
+        const priorDates = getPriorViolationDates(records, s, dateRange);
+        const total = priorDates.length + 1; // 加上本次這一筆
+        return {
+          className: s.className.trim(),
+          seatNumber: s.seatNumber.trim(),
+          studentName: s.studentName.trim(),
+          total,
+          priorDates,
+          thisDate: formData.date,
+          punishment: formatPunishment(total),
+        };
+      });
+
+      // 第一次（警告乙次）不用提醒；只要有人累計達 2 次以上，就跳出提醒視窗
+      const needRemind = reminders.some(r => r.total >= 2);
+
       setFormData({ ...formData, students: [{ className: '', seatNumber: '', studentName: '' }] });
-      setTimeout(()=>setMsg(null), 3000);
-    } catch (err) { 
+
+      if (needRemind) {
+        setReminder({ list: reminders, range: { ...dateRange } });
+      } else {
+        setMsg({ text: `成功登錄 ${validStudents.length} 筆違規紀錄`, type: 'success' });
+        setTimeout(()=>setMsg(null), 3000);
+      }
+    } catch (err) {
       setMsg({ text: '儲存失敗，請檢查網路連線', type: 'error' }); 
     }
   };
@@ -513,6 +570,72 @@ export default function App() {
       {msg && (
         <div className={`fixed top-28 left-1/2 -translate-x-1/2 z-[100] w-11/12 max-w-lg px-8 py-5 rounded-2xl shadow-2xl font-black text-base text-white transition-all text-center leading-relaxed ${msg.type === 'error' ? 'bg-red-600' : 'bg-green-600 animate-bounce'}`}>
           {msg.text}
+        </div>
+      )}
+
+      {reminder && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-blue-600 text-white px-8 py-6 flex items-center gap-3">
+              <CheckCircle2 size={28} />
+              <div>
+                <div className="font-black text-xl leading-tight">登錄完成 ‧ 累計懲處提醒</div>
+                <div className="text-blue-100 text-xs font-bold tracking-wider mt-1">
+                  學期區間 {reminder.range.start} ~ {reminder.range.end}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 md:p-8 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
+              {reminder.list.map((r, idx) => (
+                <div key={idx} className="bg-slate-50 border border-slate-100 rounded-2xl p-5">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div className="font-black text-slate-700 text-base">
+                      {r.className} 班 {r.seatNumber} 號
+                      {r.studentName ? <span className="text-slate-400 font-bold ml-1">{r.studentName}</span> : null}
+                    </div>
+                    <span className="shrink-0 bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-black">
+                      第 {r.total} 次
+                    </span>
+                  </div>
+                  {r.total === 1 ? (
+                    <div className="text-slate-500 font-bold text-sm">首次登記，記警告乙次（毋須特別處置）。</div>
+                  ) : (
+                    <>
+                      <div className="flex items-baseline gap-2 mb-3">
+                        <span className="text-slate-400 font-bold text-sm">本次應記：</span>
+                        <span className="text-red-600 font-black text-lg">{r.punishment}</span>
+                      </div>
+                      <div className="bg-white border border-slate-100 rounded-xl p-3">
+                        <div className="text-[11px] font-black text-slate-400 tracking-wider uppercase mb-2">
+                          先前違規日期（{r.priorDates.length} 次）
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {r.priorDates.map((d, i) => (
+                            <span key={i} className="bg-slate-100 text-slate-600 px-2.5 py-1 rounded-lg text-xs font-bold">
+                              {d}
+                            </span>
+                          ))}
+                          <span className="bg-red-50 text-red-600 border border-red-100 px-2.5 py-1 rounded-lg text-xs font-black">
+                            {r.thisDate}（本次）
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+              <p className="text-[11px] text-slate-400 font-bold leading-relaxed pt-1">
+                ※ 次數依「統計報表」的學期查詢區間統計。換算方式：每次違規記警告 1 次，滿 3 警告折抵小過 1 次，滿 3 小過折抵大過 1 次（累計呈現）。
+              </p>
+            </div>
+
+            <div className="px-6 md:px-8 py-5 border-t border-slate-100 flex justify-end">
+              <button onClick={() => setReminder(null)} className="bg-blue-600 text-white px-8 py-3 rounded-2xl font-black shadow-lg shadow-blue-200 hover:bg-blue-700 active:scale-[0.98] transition-all">
+                我知道了
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
